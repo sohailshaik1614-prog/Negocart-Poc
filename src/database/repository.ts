@@ -55,119 +55,148 @@ export class NegoZaarRepository {
 
   // ============================================================================
   // IN-MEMORY DATA STORE (For local dev, test suites, and offline resilience)
+  // Shared across Next.js dev server route closures via globalThis
   // ============================================================================
-  private static merchants: Map<string, Merchant> = new Map([
-    [
-      "a0000000-0000-0000-0000-000000000001",
-      {
-        id: "a0000000-0000-0000-0000-000000000001",
-        name: "Apex Retail Brands",
-        slug: "apex-retail",
-        billingEmail: "admin@apexretail.test",
-        tier: "GROWTH",
-        status: "ACTIVE",
-        maxStores: 3,
-        settings: {
-          defaultMaxRounds: 3,
-          defaultStrategy: "MODERATE",
-          defaultMaxDiscountPercentage: 25,
-          notificationEmail: "alerts@apexretail.test",
+  private static get merchants(): Map<string, Merchant> {
+    return ((globalThis as any).__negozaar_merchants ??= new Map([
+      [
+        "a0000000-0000-0000-0000-000000000001",
+        {
+          id: "a0000000-0000-0000-0000-000000000001",
+          name: "Apex Retail Brands",
+          slug: "apex-retail",
+          billingEmail: "admin@apexretail.test",
+          tier: "GROWTH",
+          status: "ACTIVE",
+          maxStores: 3,
+          settings: {
+            defaultMaxRounds: 3,
+            defaultStrategy: "MODERATE",
+            defaultMaxDiscountPercentage: 25,
+            notificationEmail: "alerts@apexretail.test",
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
         },
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      },
-    ],
-  ]);
+      ],
+    ]));
+  }
 
-  private static users: Map<string, User> = new Map([
-    [
-      "b0000000-0000-0000-0000-000000000001",
-      {
-        id: "b0000000-0000-0000-0000-000000000001",
-        merchantId: "a0000000-0000-0000-0000-000000000001",
-        email: "merchant@apexretail.test",
-        fullName: "Priya Sharma",
-        passwordHash: NegoZaarRepository.DEFAULT_TEST_PASSWORD_HASH,
-        role: "OWNER",
-        isActive: true,
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      },
-    ],
-  ]);
-
-  private static stores: Map<string, Store> = new Map([
-    [
-      "d0000000-0000-0000-0000-000000000001",
-      {
-        id: "d0000000-0000-0000-0000-000000000001",
-        merchantId: "a0000000-0000-0000-0000-000000000001",
-        platform: "SHOPIFY",
-        platformStoreId: "apex-luxury.myshopify.com",
-        storeName: "Apex Luxury Lifestyle",
-        publicStoreKey: "pub_live_apex_9a8b7c6d5e4f3a2b1c",
-        currency: "INR",
-        status: "ACTIVE",
-        settings: {
-          brandColor: "#16a34a",
-          widgetTheme: "auto",
-          position: "bottom-right",
-          requireEmailToClaim: false,
+  private static get users(): Map<string, User> {
+    return ((globalThis as any).__negozaar_users ??= new Map([
+      [
+        "b0000000-0000-0000-0000-000000000001",
+        {
+          id: "b0000000-0000-0000-0000-000000000001",
+          merchantId: "a0000000-0000-0000-0000-000000000001",
+          email: "merchant@apexretail.test",
+          fullName: "Priya Sharma",
+          passwordHash: NegoZaarRepository.DEFAULT_TEST_PASSWORD_HASH,
+          role: "OWNER",
+          isActive: true,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
         },
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      },
-    ],
-  ]);
+      ],
+    ]));
+  }
 
-  private static products: Map<string, Product> = new Map([
-    [
-      "e0000000-0000-0000-0000-000000000001",
-      {
-        id: "e0000000-0000-0000-0000-000000000001",
-        storeId: "d0000000-0000-0000-0000-000000000001",
-        externalProductId: "gid://shopify/Product/8472910381",
-        title: "Artisan Leather Weekend Duffel Bag",
-        handle: "artisan-leather-weekend-duffel-bag",
-        sku: "AL-BAG-001",
-        originalPrice: 2000.0,
-        currency: "INR",
-        imageUrl: "https://images.unsplash.com/photo-1553062407-98eeb64c6a62?auto=format&fit=crop&w=400&q=80",
-        inventoryQuantity: 15,
-        isActive: true,
-        syncedAt: "2026-01-01T00:00:00.000Z",
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      },
-    ],
-  ]);
+  private static get stores(): Map<string, Store> {
+    return ((globalThis as any).__negozaar_stores ??= new Map([
+      [
+        "d0000000-0000-0000-0000-000000000001",
+        {
+          id: "d0000000-0000-0000-0000-000000000001",
+          merchantId: "a0000000-0000-0000-0000-000000000001",
+          platform: "SHOPIFY",
+          platformStoreId: "apex-luxury.myshopify.com",
+          storeName: "Apex Luxury Lifestyle",
+          publicStoreKey: "pub_live_apex_9a8b7c6d5e4f3a2b1c",
+          currency: "INR",
+          status: "ACTIVE",
+          settings: {
+            brandColor: "#16a34a",
+            widgetTheme: "auto",
+            position: "bottom-right",
+            requireEmailToClaim: false,
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    ]));
+  }
 
-  private static rules: Map<string, ProductNegotiationSettings> = new Map([
-    [
-      "e0000000-0000-0000-0000-000000000001",
-      {
-        id: "f0000000-0000-0000-0000-000000000001",
-        storeId: "d0000000-0000-0000-0000-000000000001",
-        productId: "e0000000-0000-0000-0000-000000000001",
-        isNegotiationEnabled: true,
-        minAcceptablePrice: 1500.0, // Floor price: ₹1,500
-        maxDiscountPercentage: 25.0,
-        autoAcceptPrice: 1850.0,
-        maxNegotiationRounds: 3,
-        strategy: "MODERATE",
-        minOrderQuantity: 1,
-        couponValidityHours: 24,
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      },
-    ],
-  ]);
+  private static get products(): Map<string, Product> {
+    return ((globalThis as any).__negozaar_products ??= new Map([
+      [
+        "e0000000-0000-0000-0000-000000000001",
+        {
+          id: "e0000000-0000-0000-0000-000000000001",
+          storeId: "d0000000-0000-0000-0000-000000000001",
+          externalProductId: "gid://shopify/Product/8472910381",
+          title: "Artisan Leather Weekend Duffel Bag",
+          handle: "artisan-leather-weekend-duffel-bag",
+          sku: "AL-BAG-001",
+          originalPrice: 2000.0,
+          currency: "INR",
+          imageUrl: "https://images.unsplash.com/photo-1553062407-98eeb64c6a62?auto=format&fit=crop&w=400&q=80",
+          inventoryQuantity: 15,
+          isActive: true,
+          syncedAt: "2026-01-01T00:00:00.000Z",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    ]));
+  }
 
-  private static sessions: Map<string, NegotiationSession> = new Map();
-  private static messages: Map<string, NegotiationMessage[]> = new Map();
-  private static offers: Map<string, NegotiationOffer[]> = new Map();
-  private static transactions: Map<string, TransactionRecord> = new Map();
-  private static analytics: AnalyticsEvent[] = [];
+  private static get rules(): Map<string, ProductNegotiationSettings> {
+    return ((globalThis as any).__negozaar_rules ??= new Map([
+      [
+        "e0000000-0000-0000-0000-000000000001",
+        {
+          id: "f0000000-0000-0000-0000-000000000001",
+          storeId: "d0000000-0000-0000-0000-000000000001",
+          productId: "e0000000-0000-0000-0000-000000000001",
+          isNegotiationEnabled: true,
+          minAcceptablePrice: 1500.0, // Floor price: ₹1,500
+          maxDiscountPercentage: 25.0,
+          autoAcceptPrice: 1850.0,
+          maxNegotiationRounds: 3,
+          strategy: "MODERATE",
+          minOrderQuantity: 1,
+          couponValidityHours: 24,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    ]));
+  }
+
+  private static get sessions(): Map<string, NegotiationSession> {
+    return ((globalThis as any).__negozaar_sessions ??= new Map());
+  }
+
+  private static get messages(): Map<string, NegotiationMessage[]> {
+    return ((globalThis as any).__negozaar_messages ??= new Map());
+  }
+
+  private static get offers(): Map<string, NegotiationOffer[]> {
+    return ((globalThis as any).__negozaar_offers ??= new Map());
+  }
+
+  private static get transactions(): Map<string, TransactionRecord> {
+    return ((globalThis as any).__negozaar_transactions ??= new Map());
+  }
+
+  private static get analytics(): AnalyticsEvent[] {
+    return ((globalThis as any).__negozaar_analytics ??= []);
+  }
+
+  private static set analytics(val: AnalyticsEvent[]) {
+    (globalThis as any).__negozaar_analytics = val;
+  }
 
   // ============================================================================
   // AUTHENTICATION & USERS
