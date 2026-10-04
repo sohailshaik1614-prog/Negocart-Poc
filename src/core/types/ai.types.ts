@@ -20,7 +20,9 @@ export interface AIPromptContext {
   targetSuggestedCounter: number;
   minAllowedFloor: number;
   history: ConversationTurn[];
+  offerHistory?: Array<{ round: number; amount: number; proposedBy: "CUSTOMER" | "AI_AGENT" }>;
   merchantToneGuide?: string;
+  isSuspiciousInput?: boolean;
 }
 
 export interface AIDecision {
@@ -34,3 +36,5 @@ export interface INegotiationAIService {
   readonly providerName: string;
   generateNegotiationResponse(context: AIPromptContext): Promise<AIDecision>;
 }
+
+export type AIProvider = INegotiationAIService;

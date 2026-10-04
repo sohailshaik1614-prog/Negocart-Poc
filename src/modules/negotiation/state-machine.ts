@@ -3,9 +3,11 @@ import { DomainError } from "@/core/errors/domain-errors";
 
 export class NegotiationStateMachine {
   private static readonly VALID_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
-    INITIALIZED: ["ACTIVE", "TERMINATED", "EXPIRED"],
-    ACTIVE: ["COUNTERED", "ACCEPTED", "REJECTED", "EXPIRED", "TERMINATED"],
-    COUNTERED: ["ACTIVE", "COUNTERED", "ACCEPTED", "REJECTED", "EXPIRED", "TERMINATED"],
+    CREATED: ["ACTIVE", "COUNTERED", "FINAL_OFFER", "ACCEPTED", "REJECTED", "EXPIRED", "TERMINATED"],
+    INITIALIZED: ["ACTIVE", "COUNTERED", "FINAL_OFFER", "ACCEPTED", "REJECTED", "EXPIRED", "TERMINATED"],
+    ACTIVE: ["COUNTERED", "FINAL_OFFER", "ACCEPTED", "REJECTED", "EXPIRED", "TERMINATED"],
+    COUNTERED: ["ACTIVE", "COUNTERED", "FINAL_OFFER", "ACCEPTED", "REJECTED", "EXPIRED", "TERMINATED"],
+    FINAL_OFFER: ["ACCEPTED", "REJECTED", "EXPIRED", "TERMINATED"], // Take-it-or-leave-it: no further counter allowed
     ACCEPTED: [], // Terminal state
     REJECTED: [], // Terminal state
     EXPIRED: [], // Terminal state

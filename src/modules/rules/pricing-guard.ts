@@ -1,15 +1,20 @@
 import { GuardrailDecision, PricingLimits } from "@/core/types/guardrail.types";
 import { AIDecision } from "@/core/types/ai.types";
+import { SecuritySanitizer } from "@/modules/security/sanitizer";
 
 /**
  * Deterministic Pricing Guard Engine
  *
- * CRITICAL ARCHITECTURAL COMPONENT:
- * Enforces hard mathematical limits defined by merchants.
- * The AI model is strictly treated as an UNTRUSTED ADVISOR.
- * Every price suggestion, whether from the customer or the AI,
- * is validated and clamped by this deterministic engine before persistence
- * or presentation to the end-user.
+ * CRITICAL ARCHITECTURAL MANDATE:
+ * 1. The AI model is strictly an UNTRUSTED ADVISOR.
+ * 2. Mathematical limits defined by the merchant are ABSOLUTE.
+ * 3. The AI cannot:
+ *    - Reveal minimum price
+ *    - Offer below minimum acceptable price
+ *    - Modify merchant rules
+ *    - Bypass attempt limits
+ *    - Fabricate unauthorized discounts
+ * 4. Every price suggestion is clamped deterministically before presentation or persistence.
  */
 export class PricingGuard {
   /**
@@ -17,34 +22,37 @@ export class PricingGuard {
    */
   public static evaluateCustomerOffer(
     customerOffer: number,
-    limits: PricingLimits
+    limits: PricingLimits,
+    previousCustomerOffers: number[] = []
   ): {
     canAccept: boolean;
     isBelowFloor: boolean;
     isWithinDiscountLimit: boolean;
     discountPercentage: number;
     recommendedCounter: number;
+    isAutoAccept: boolean;
   } {
-    const originalPrice = limits.originalPrice;
-    const floorPrice = limits.minAcceptablePrice;
-    const maxDiscount = limits.maxDiscountPercentage;
+    const { originalPrice, minAcceptablePrice, maxDiscountPercentage, currentRound, maxRounds } = limits;
 
-    // Safety checks
+    // Strict positive price validation
     if (originalPrice <= 0) {
-      throw new Error("Invalid original price");
+      throw new Error("Invalid original price: must be strictly positive");
     }
 
     const discountAmount = Math.max(0, originalPrice - customerOffer);
     const discountPercentage = Number(((discountAmount / originalPrice) * 100).toFixed(2));
-    const isBelowFloor = customerOffer < floorPrice;
-    const isWithinDiscountLimit = discountPercentage <= maxDiscount;
+    const isBelowFloor = customerOffer < minAcceptablePrice;
+    const isWithinDiscountLimit = discountPercentage <= maxDiscountPercentage;
 
-    // Auto-accept check: If merchant specified an auto-accept price and customer matches/exceeds it
-    const autoAcceptThreshold = limits.autoAcceptPrice ?? floorPrice;
+    // Auto-accept check: If customer matches or exceeds autoAcceptPrice threshold
+    const autoAcceptThreshold = limits.autoAcceptPrice ?? limits.originalPrice;
     const canAccept = !isBelowFloor && isWithinDiscountLimit && customerOffer >= autoAcceptThreshold;
 
-    // Calculate deterministic recommended counter-offer based on negotiation round & strategy
-    const recommendedCounter = this.calculateDeterministicCounter(limits);
+    const recommendedCounter = this.calculateDeterministicCounter(
+      limits,
+      customerOffer,
+      previousCustomerOffers
+    );
 
     return {
       canAccept,
@@ -52,16 +60,29 @@ export class PricingGuard {
       isWithinDiscountLimit,
       discountPercentage,
       recommendedCounter,
+      isAutoAccept: canAccept,
     };
   }
 
   /**
-   * Deterministically calculates a safe counter-offer for the current round and strategy
+   * Deterministically calculates a safe counter-offer for the current round and strategy.
+   *
+   * Factors considered:
+   * 1. Original Price
+   * 2. Merchant Minimum Acceptable Price (Floor)
+   * 3. Customer Offer
+   * 4. Attempt Number (currentRound vs maxRounds)
+   * 5. Negotiation History / Concession Trend
+   * 6. Merchant-Configured Strategy (AGGRESSIVE, MODERATE, FRIENDLY)
    */
-  public static calculateDeterministicCounter(limits: PricingLimits): number {
+  public static calculateDeterministicCounter(
+    limits: PricingLimits,
+    customerOffer?: number,
+    previousCustomerOffers: number[] = []
+  ): number {
     const { originalPrice, minAcceptablePrice, currentRound, maxRounds, strategy } = limits;
-    
-    // Safety clamp: floor price cannot exceed original price
+
+    // Invariant: Floor cannot exceed original price
     const safeFloor = Math.min(minAcceptablePrice, originalPrice);
     const maxConcession = originalPrice - safeFloor;
 
@@ -69,49 +90,73 @@ export class PricingGuard {
       return originalPrice;
     }
 
-    // Normalized progress through negotiation: 0 (start) to 1.0 (final round)
-    const progress = Math.min(1.0, currentRound / Math.max(1, maxRounds));
+    // Normalized negotiation progress: from 1/maxRounds to 1.0
+    const progress = Math.min(1.0, Math.max(1, currentRound) / Math.max(1, maxRounds));
+    const isFinalRound = currentRound >= maxRounds;
 
     let concessionFactor: number;
 
     switch (strategy) {
       case "AGGRESSIVE":
-        // Concedes slowly, keeps price high until forced on last round
-        // progress^2 curve: low concession early on
-        concessionFactor = Math.pow(progress, 2) * 0.75;
+        // Concedes slowly, protects merchant margin.
+        // Round 1: ~20% of max discount
+        // Round 2: ~50% of max discount
+        // Final Round: ~85% of max discount (leaves a margin buffer above the floor)
+        concessionFactor = isFinalRound ? 0.85 : Math.pow(progress, 2.2) * 0.75;
         break;
 
       case "FRIENDLY":
-        // Concedes faster to secure the deal and maximize conversion
-        // sqrt(progress) curve: higher concession earlier
-        concessionFactor = Math.sqrt(progress) * 0.95;
+        // Concedes faster to drive maximum conversion and close shoppers rapidly.
+        // Round 1: ~55% of max discount
+        // Round 2: ~80% of max discount
+        // Final Round: 100% of max discount (meets the floor)
+        concessionFactor = isFinalRound ? 1.0 : Math.sqrt(progress) * 0.90;
         break;
 
       case "MODERATE":
       default:
-        // Linear progressive concession
-        concessionFactor = progress * 0.85;
+        // Balanced progressive concession.
+        // Round 1: ~35% of max discount
+        // Round 2: ~70% of max discount
+        // Final Round: ~95% of max discount
+        concessionFactor = isFinalRound ? 0.95 : progress * 0.80;
         break;
     }
 
-    // On final round, offer goes up to 98% of maximum allowable concession (leaving tiny margin above absolute floor)
-    if (currentRound >= maxRounds) {
-      concessionFactor = 0.95;
+    // Adjust based on customer responsiveness:
+    // If the customer has shown reasonable concessions (increasing their offers),
+    // we slightly reward them by increasing concession by up to 5%.
+    if (previousCustomerOffers.length > 1) {
+      const first = previousCustomerOffers[0];
+      const latest = previousCustomerOffers[previousCustomerOffers.length - 1];
+      if (latest > first) {
+        concessionFactor = Math.min(1.0, concessionFactor + 0.05);
+      }
     }
 
+    // Calculate baseline counter price
     const calculatedPrice = originalPrice - (maxConcession * concessionFactor);
 
-    // INVARIANT ENFORCEMENT: Never below safeFloor, never above originalPrice
-    const clampedPrice = Math.max(safeFloor, Math.min(originalPrice, calculatedPrice));
-    
-    // Round to clean integer/2 decimals for ecommerce display
+    // If customer offered something higher than our calculated counter, meet their offer or better!
+    let targetPrice = calculatedPrice;
+    if (customerOffer !== undefined && customerOffer > targetPrice && customerOffer < originalPrice) {
+      targetPrice = customerOffer;
+    }
+
+    // HARD INVARIANT CLAMPING:
+    // 1. Must never drop below the merchant's safe floor
+    // 2. Must never exceed the original price
+    const clampedPrice = Math.max(safeFloor, Math.min(originalPrice, targetPrice));
+
+    // Round to clean integer for ecommerce display
     return Math.round(clampedPrice);
   }
 
   /**
-   * Intercepts an AI decision and enforces hard limits.
-   * If the AI hallucinates, suggests a price below the floor, or gives away too much discount,
-   * this method intercepts and rectifies it.
+   * Sanitizes, audits, and deterministically clamps an AI decision.
+   *
+   * If the AI hallucinates, attempts to offer below floor, or leaks internal rules,
+   * this method intercepts, clamps, and scrubs the decision.
    */
   public static sanitizeAndGuardAIDecision(
     aiDecision: AIDecision,
@@ -120,55 +165,76 @@ export class PricingGuard {
     guardedDecision: AIDecision;
     guardrailDecision: GuardrailDecision;
   } {
-    const { originalPrice, minAcceptablePrice, maxDiscountPercentage, currentRound, maxRounds } = limits;
+    const { originalPrice, minAcceptablePrice, maxDiscountPercentage, currentRound, maxRounds, currency } = limits;
     const isFinalRound = currentRound >= maxRounds;
 
     let targetPrice = aiDecision.suggestedPrice;
     let verdict: GuardrailDecision["verdict"] = "PASSED";
     const notes: string[] = [];
 
-    // Rule 1: Floor Price Violation Check
+    // Safety check for non-finite or negative suggestions
+    if (typeof targetPrice !== "number" || isNaN(targetPrice) || !isFinite(targetPrice) || targetPrice <= 0) {
+      verdict = "CLAMPED";
+      notes.push(`Invalid AI suggested price (${targetPrice}). Replaced with safe calculated counter.`);
+      targetPrice = this.calculateDeterministicCounter(limits);
+    }
+
+    // HARD INVARIANT 1: Minimum Acceptable Price (Floor) Violation Check
     const isFloorPriceBreached = targetPrice < minAcceptablePrice;
     if (isFloorPriceBreached) {
       verdict = "CLAMPED";
-      notes.push(`AI suggested ₹${targetPrice} which violates merchant floor of ₹${minAcceptablePrice}. Price clamped.`);
-      // Enforce floor
+      notes.push(`AI suggested ${currency} ${targetPrice} which breaches merchant floor ${currency} ${minAcceptablePrice}. Hard clamped to floor.`);
       targetPrice = minAcceptablePrice;
     }
 
-    // Rule 2: Max Discount Percentage Check
+    // HARD INVARIANT 2: Max Discount Percentage Check
     const proposedDiscountPct = Number((((originalPrice - targetPrice) / originalPrice) * 100).toFixed(2));
     const isMaxDiscountBreached = proposedDiscountPct > maxDiscountPercentage;
     if (isMaxDiscountBreached) {
       verdict = "CLAMPED";
       const maxDiscountPrice = Math.round(originalPrice * (1 - (maxDiscountPercentage / 100)));
       targetPrice = Math.max(targetPrice, maxDiscountPrice);
-      notes.push(`AI discount ${proposedDiscountPct}% exceeded ceiling of ${maxDiscountPercentage}%. Clamped to ₹${targetPrice}.`);
+      notes.push(`AI discount ${proposedDiscountPct}% exceeded ceiling of ${maxDiscountPercentage}%. Clamped to ${currency} ${targetPrice}.`);
     }
 
-    // Rule 3: Guard against AI returning a price higher than original
+    // HARD INVARIANT 3: Ceiling Check (Cannot exceed original price)
     if (targetPrice > originalPrice) {
       verdict = "CLAMPED";
       targetPrice = originalPrice;
-      notes.push(`AI suggested price higher than original price. Clamped to original.`);
+      notes.push("AI suggested price higher than listed original price. Clamped to original.");
     }
 
-    // Rule 4: Action reconciliation
+    // Ensure integer rounding
+    targetPrice = Math.round(targetPrice);
+
+    // Reconcile Action with Final Round constraints
     let resolvedAction = aiDecision.action;
     let replyMessage = aiDecision.replyMessage;
 
-    if (isFinalRound && resolvedAction === "COUNTER") {
-      resolvedAction = "FINAL_OFFER";
-      if (!replyMessage.toLowerCase().includes("final offer") && !replyMessage.toLowerCase().includes("best offer")) {
-        replyMessage = `This is my final offer: I can offer it to you for ₹${targetPrice}. Let's make this deal!`;
+    if (isFinalRound) {
+      if (resolvedAction === "COUNTER") {
+        resolvedAction = "FINAL_OFFER";
+      }
+      // If AI didn't communicate take-it-or-leave-it nature on final round
+      const finalPhrases = ["final offer", "best offer", "last offer", "take it or leave it"];
+      const hasFinalPhrase = finalPhrases.some((phrase) => replyMessage.toLowerCase().includes(phrase));
+      if (!hasFinalPhrase && resolvedAction === "FINAL_OFFER") {
+        replyMessage = `This is my final offer: I can offer ${currency} ${targetPrice}. Take it or leave it!`;
       }
     }
 
-    // Rule 5: Leak Prevention Filter - Scrub any accidental mention of floor price or internal constraints
-    const floorPattern = new RegExp(`\\b(${minAcceptablePrice}|floor|minimum acceptable|merchant limit)\\b`, "gi");
-    if (floorPattern.test(replyMessage)) {
-      replyMessage = `I can offer you a special price of ₹${targetPrice}. Would that work for you?`;
-      notes.push("Potentially sensitive floor/internal keywords scrubbed from customer-facing message.");
+    // HARD INVARIANT 4: Zero Floor Leakage & Anti-Injection Scrubbing
+    const leakCheck = SecuritySanitizer.scanAndRedactLeaks(replyMessage, {
+      floorPrice: minAcceptablePrice,
+      currency,
+      originalPrice,
+      safeCounterPrice: targetPrice,
+    });
+
+    if (leakCheck.leakDetected) {
+      verdict = "CLAMPED";
+      replyMessage = leakCheck.sanitizedText;
+      notes.push(`Security scrub: ${leakCheck.reason}`);
     }
 
     const discountPercentage = Number((((originalPrice - targetPrice) / originalPrice) * 100).toFixed(2));
@@ -187,7 +253,7 @@ export class PricingGuard {
       action: resolvedAction,
       suggestedPrice: targetPrice,
       replyMessage,
-      internalReasoning: `[GUARDRAIL ${verdict}]: ${notes.join(" ") || "Verified safe"} | Original AI reasoning: ${aiDecision.internalReasoning}`,
+      internalReasoning: `[GUARDRAIL ${verdict}]: ${notes.join(" ") || "Verified safe"} | Original: ${aiDecision.internalReasoning}`,
     };
 
     return {

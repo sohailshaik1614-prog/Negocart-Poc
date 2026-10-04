@@ -236,7 +236,7 @@ export class NegotiationSessionManager {
 
     // Validate attempts limit
     const currentAttempt = session.attemptNumber || session.currentRound;
-    if (currentAttempt >= session.maxAttempts) {
+    if (session.status === "FINAL_OFFER" || currentAttempt >= session.maxAttempts) {
       throw new NegotiationRoundsExceededError("Maximum negotiation attempts reached");
     }
 
@@ -305,7 +305,12 @@ export class NegotiationSessionManager {
       currency: session.currency,
     };
 
-    const evaluation = PricingGuard.evaluateCustomerOffer(parsedAmount, limits);
+    const previousOffers = await NegoZaarRepository.getSessionOffers(session.id);
+    const customerOfferValues = previousOffers
+      .filter((o) => o.proposedBy === "CUSTOMER")
+      .map((o) => o.amount);
+
+    const evaluation = PricingGuard.evaluateCustomerOffer(parsedAmount, limits, customerOfferValues);
 
     // Check Case A: Immediate Auto-Acceptance
     if (evaluation.canAccept) {
@@ -352,7 +357,8 @@ export class NegotiationSessionManager {
       rule,
       parsedAmount,
       newAttempt,
-      evaluation.recommendedCounter
+      evaluation.recommendedCounter,
+      sanitizedMsg.isSuspicious || sanitizedMsg.isFloorProbe
     );
 
     const updatedSession = (await NegoZaarRepository.getSessionById(session.id))!;
@@ -379,7 +385,8 @@ export class NegotiationSessionManager {
     },
     customerOffer: number,
     attemptNumber: number,
-    recommendedCounter: number
+    recommendedCounter: number,
+    isSuspiciousInput: boolean = false
   ): Promise<CounterofferResult> {
     const isFinalRound = attemptNumber >= session.maxAttempts;
     const limits: PricingLimits = {
@@ -394,6 +401,8 @@ export class NegotiationSessionManager {
 
     // Prepare AI Prompt Context
     const previousMessages = await NegoZaarRepository.getSessionMessages(session.id);
+    const existingOffers = await NegoZaarRepository.getSessionOffers(session.id);
+
     const aiContext: AIPromptContext = {
       productTitle: product.title,
       originalPrice: product.originalPrice,
@@ -408,7 +417,13 @@ export class NegotiationSessionManager {
         sender: m.senderRole,
         text: m.messageText,
       })),
+      offerHistory: existingOffers.map((o) => ({
+        round: o.roundNumber || o.attemptNumber,
+        amount: o.amount,
+        proposedBy: o.proposedBy,
+      })),
       merchantToneGuide: rule.customSystemPromptAddon,
+      isSuspiciousInput,
     };
 
     // Invoke AI Service Abstraction
@@ -441,6 +456,8 @@ export class NegotiationSessionManager {
     let nextStatus: NegotiationSession["status"] = "COUNTERED";
     if (guardedDecision.action === "ACCEPT") {
       nextStatus = "ACCEPTED";
+    } else if (guardedDecision.action === "FINAL_OFFER" || isFinalRound) {
+      nextStatus = "FINAL_OFFER";
     }
 
     NegotiationStateMachine.assertTransition(session.status, nextStatus);
@@ -565,8 +582,15 @@ export class NegotiationSessionManager {
     const session = await this.resolveSession(sessionToken, sessionId);
 
     if (session.status === "ACCEPTED" && session.finalAgreedPrice) {
-      // Already accepted, retrieve claim
-      return this.claimDeal(sessionToken || "");
+      const existingTx = await NegoZaarRepository.getTransactionBySessionId(session.id);
+      if (existingTx) {
+        return {
+          success: true,
+          agreedPrice: session.finalAgreedPrice,
+          discountCode: existingTx.discountCode,
+          expiresAt: existingTx.expiresAt,
+        };
+      }
     }
 
     if (["REJECTED", "EXPIRED", "TERMINATED"].includes(session.status)) {

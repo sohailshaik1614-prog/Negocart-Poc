@@ -1,7 +1,9 @@
 export type SessionStatus = 
+  | "CREATED"
   | "INITIALIZED" 
   | "ACTIVE" 
   | "COUNTERED" 
+  | "FINAL_OFFER"
   | "ACCEPTED" 
   | "REJECTED" 
   | "EXPIRED" 

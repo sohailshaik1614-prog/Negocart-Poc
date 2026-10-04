@@ -1264,6 +1264,25 @@ export class NegoZaarRepository {
     return data as TransactionRecord;
   }
 
+  public static async getTransactionBySessionId(sessionId: string): Promise<TransactionRecord | null> {
+    if (this.isUsingMockDb()) {
+      for (const tx of this.transactions.values()) {
+        if (tx.sessionId === sessionId) return tx;
+      }
+      return null;
+    }
+
+    const supabase = getSupabaseAdminClient();
+    const { data, error } = await supabase
+      .from("transactions")
+      .select("*")
+      .eq("session_id", sessionId)
+      .maybeSingle();
+
+    if (error) return null;
+    return data as TransactionRecord | null;
+  }
+
   public static async recordAnalyticsEvent(event: AnalyticsEvent): Promise<void> {
     if (this.isUsingMockDb()) {
       this.analytics.push(event);
