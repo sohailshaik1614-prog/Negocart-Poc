@@ -3,10 +3,11 @@ import { AuthService } from "@/modules/auth/auth-service";
 import { RBAC } from "@/modules/auth/rbac";
 import { TenantContextManager } from "@/modules/tenancy/tenant-context";
 import { NegoZaarRepository } from "@/database/repository";
+import { DomainError } from "@/core/errors/domain-errors";
 
 export async function GET(req: NextRequest) {
   try {
-    const authHeader = req.headers.get("authorization");
+    const authHeader = req.headers.get("authorization") || req.cookies.get("negozaar_session")?.value;
     const authContext = await AuthService.resolveAuthContext(authHeader);
     RBAC.assertPermission(authContext.role, "sessions:read");
 
@@ -14,26 +15,45 @@ export async function GET(req: NextRequest) {
     const storeId = searchParams.get("storeId");
     const sessionId = searchParams.get("sessionId");
 
-    if (!storeId) {
-      return NextResponse.json({ error: "Query parameter 'storeId' required" }, { status: 400 });
-    }
-
-    await TenantContextManager.validateStoreAccess(authContext, storeId);
-
     if (sessionId) {
-      const session = await NegoZaarRepository.getSessionById(sessionId);
-      if (!session || session.storeId !== storeId) {
-        return NextResponse.json({ error: "Session not found" }, { status: 404 });
-      }
-
+      // Validate session access: Ensures session belongs to authenticated merchant
+      const session = await TenantContextManager.validateSessionAccess(authContext, sessionId);
       const messages = await NegoZaarRepository.getSessionMessages(sessionId);
-      return NextResponse.json({ session, messages });
+      const offers = await NegoZaarRepository.getSessionOffers(sessionId);
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          session,
+          messages,
+          offers,
+        },
+      });
     }
 
-    const sessions = await NegoZaarRepository.getRecentSessions(storeId, 50);
-    return NextResponse.json({ sessions });
+    if (storeId) {
+      await TenantContextManager.validateStoreAccess(authContext, storeId);
+      const sessions = await NegoZaarRepository.getRecentSessions(storeId, 50);
+      return NextResponse.json({
+        success: true,
+        data: { sessions, total: sessions.length },
+      });
+    }
+
+    // Default: fetch all sessions belonging to this merchant organization
+    const sessions = await NegoZaarRepository.getSessionsForMerchant(authContext.merchantId, 50);
+    return NextResponse.json({
+      success: true,
+      data: { sessions, total: sessions.length },
+    });
   } catch (error) {
+    if (error instanceof DomainError) {
+      return NextResponse.json(
+        { success: false, error: error.message, code: error.code },
+        { status: error.statusCode }
+      );
+    }
     const message = error instanceof Error ? error.message : "Error";
-    return NextResponse.json({ error: message }, { status: 403 });
+    return NextResponse.json({ success: false, error: message }, { status: 403 });
   }
 }

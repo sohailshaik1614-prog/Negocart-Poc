@@ -16,6 +16,10 @@ export interface NegotiationMessage {
   senderRole: MessageSender;
   messageText: string;
   roundNumber: number;
+  attemptNumber: number; // Unified attempt number
+  customerMessage?: string; // Captured customer proposal text
+  aiResponse?: string; // Captured AI response text
+  associatedOffer?: number; // Financial offer associated with this turn
   rawAiReasoning?: string; // Internal audit only, stripped from client view
   createdAt: string;
 }
@@ -24,6 +28,7 @@ export interface NegotiationOffer {
   id: string;
   sessionId: string;
   roundNumber: number;
+  attemptNumber: number; // Unified attempt number
   proposedBy: OfferProposer;
   amount: number;
   currency: string;
@@ -35,14 +40,19 @@ export interface NegotiationOffer {
 
 export interface NegotiationSession {
   id: string;
+  merchantId: string; // Direct merchant tenant reference
   storeId: string;
   productId: string;
+  cartReference?: string;
   customerId: string;
   sessionTokenHash: string;
   status: SessionStatus;
   currentRound: number;
+  attemptNumber: number; // Attempt number in the negotiation
   maxRounds: number;
+  maxAttempts: number; // Maximum attempts allowed
   originalPrice: number;
+  currentOffer?: number; // Latest proposed or negotiated offer
   initialCustomerOffer?: number;
   finalAgreedPrice?: number;
   currency: string;

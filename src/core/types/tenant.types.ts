@@ -2,6 +2,15 @@ export type MerchantTier = "STARTER" | "GROWTH" | "ENTERPRISE";
 export type UserRole = "OWNER" | "ADMIN" | "OPERATOR" | "VIEWER";
 export type SubscriptionStatus = "TRIALING" | "ACTIVE" | "PAST_DUE" | "CANCELED" | "PAUSED";
 
+export interface MerchantSettings {
+  defaultMaxRounds?: number;
+  defaultStrategy?: "AGGRESSIVE" | "MODERATE" | "FRIENDLY";
+  defaultMaxDiscountPercentage?: number;
+  notificationEmail?: string;
+  autoAcceptThresholdPercentage?: number;
+  [key: string]: unknown;
+}
+
 export interface Merchant {
   id: string;
   name: string;
@@ -10,7 +19,7 @@ export interface Merchant {
   tier: MerchantTier;
   status: "ACTIVE" | "SUSPENDED" | "ARCHIVED";
   maxStores: number;
-  settings: Record<string, unknown>;
+  settings: MerchantSettings;
   createdAt: string;
   updatedAt: string;
 }
@@ -21,6 +30,7 @@ export interface User {
   authUserId?: string;
   email: string;
   fullName: string;
+  passwordHash?: string;
   role: UserRole;
   isActive: boolean;
   createdAt: string;
