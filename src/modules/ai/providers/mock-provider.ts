@@ -11,6 +11,8 @@ export class MockNegotiationAIService implements INegotiationAIService {
 
   public async generateNegotiationResponse(context: AIPromptContext): Promise<AIDecision> {
     const {
+      productTitle,
+      originalPrice,
       customerOffer,
       targetSuggestedCounter,
       minAllowedFloor,
@@ -21,6 +23,7 @@ export class MockNegotiationAIService implements INegotiationAIService {
       history,
     } = context;
 
+    const pName = productTitle ? `"${productTitle}"` : "this item";
     const isFinalRound = currentRound >= maxRounds;
     const latestMessage = history.length > 0 && history[history.length - 1].sender === "CUSTOMER"
       ? history[history.length - 1].text.toLowerCase()
@@ -32,8 +35,8 @@ export class MockNegotiationAIService implements INegotiationAIService {
         action: isFinalRound ? "FINAL_OFFER" : "COUNTER",
         suggestedPrice: targetSuggestedCounter,
         replyMessage: isFinalRound
-          ? `I focus strictly on quality and fair value for our shoppers. My final and best offer for this product is ${currency} ${targetSuggestedCounter}. Take it or leave it!`
-          : `I appreciate you asking! We don't publish internal margins, but I want to make sure you get a great deal. I can offer it to you for ${currency} ${targetSuggestedCounter}. How does that sound?`,
+          ? `I focus strictly on quality and fair value for our shoppers. My final and best offer for ${pName} is ${currency} ${targetSuggestedCounter}. Take it or leave it!`
+          : `I appreciate you asking! We don't publish internal margins, but I want to make sure you get a great deal on ${pName}. I can offer it to you for ${currency} ${targetSuggestedCounter}. How does that sound?`,
         internalReasoning: "Deflected probe/injection attempt while proposing safe calculated counteroffer.",
       };
     }
@@ -43,7 +46,7 @@ export class MockNegotiationAIService implements INegotiationAIService {
       return {
         action: "ACCEPT",
         suggestedPrice: customerOffer,
-        replyMessage: `That sounds completely fair! I'm delighted to accept your offer of ${currency} ${customerOffer}. Let's lock in this deal!`,
+        replyMessage: `That sounds completely fair! I'm delighted to accept your offer of ${currency} ${customerOffer} for ${pName}. Let's lock in this deal!`,
         internalReasoning: `Customer offer ${customerOffer} meets target counter ${targetSuggestedCounter}. Deal agreed.`,
       };
     }
@@ -55,7 +58,7 @@ export class MockNegotiationAIService implements INegotiationAIService {
         return {
           action: "ACCEPT",
           suggestedPrice: customerOffer,
-          replyMessage: `You drive a tough bargain! Since this is our final attempt, I can agree to ${currency} ${customerOffer}. Let's finalize your order!`,
+          replyMessage: `You drive a tough bargain! Since this is our final attempt on ${pName}, I can agree to ${currency} ${customerOffer}. Let's finalize your order!`,
           internalReasoning: `Final attempt reached. Customer offer ${customerOffer} is above floor ${minAllowedFloor}, accepted to maximize conversion.`,
         };
       }
@@ -65,7 +68,7 @@ export class MockNegotiationAIService implements INegotiationAIService {
       return {
         action: "FINAL_OFFER",
         suggestedPrice: finalPrice,
-        replyMessage: `I've checked our limits, and ${currency} ${finalPrice} is my absolute final offer. Take it or leave it!`,
+        replyMessage: `I've checked our limits, and ${currency} ${finalPrice} is my absolute final offer for ${pName}. Take it or leave it!`,
         internalReasoning: `Final attempt reached. Customer offer ${customerOffer} is below floor. Issuing non-negotiable final counter ${finalPrice}.`,
       };
     }
@@ -74,8 +77,8 @@ export class MockNegotiationAIService implements INegotiationAIService {
     // Differentiate between extremely low offers vs reasonable concessions
     if (customerOffer < minAllowedFloor) {
       const messages = [
-        `I appreciate your interest, but ${currency} ${customerOffer} is a bit too low for this product. I can do ${currency} ${targetSuggestedCounter}. What do you think?`,
-        `That's quite a stretch from the retail price! The closest I can get right now is ${currency} ${targetSuggestedCounter}. Shall we meet there?`,
+        `I appreciate your interest, but ${currency} ${customerOffer} is a bit too low for ${pName}. I can do ${currency} ${targetSuggestedCounter}. What do you think?`,
+        `That's quite a stretch from the retail price of ${currency} ${originalPrice} for ${pName}! The closest I can get right now is ${currency} ${targetSuggestedCounter}. Shall we meet there?`,
       ];
       const selectedMessage = messages[(currentRound - 1) % messages.length];
 
@@ -91,7 +94,7 @@ export class MockNegotiationAIService implements INegotiationAIService {
     return {
       action: "COUNTER",
       suggestedPrice: targetSuggestedCounter,
-      replyMessage: `We're making good progress! How about we meet at ${currency} ${targetSuggestedCounter}?`,
+      replyMessage: `We're making good progress on ${pName}! How about we meet at ${currency} ${targetSuggestedCounter}?`,
       internalReasoning: `Progressive round ${currentRound} counter targeting ${targetSuggestedCounter}.`,
     };
   }
