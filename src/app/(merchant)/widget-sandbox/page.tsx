@@ -14,9 +14,14 @@ import {
   AlertCircle,
   X,
   Check,
+  ShoppingBag,
+  Store,
+  Eye,
+  ChevronRight,
 } from "lucide-react";
 import { ProductWithNegotiationSettings } from "@/core/types/product.types";
 import { NegotiationStrategy } from "@/core/types/rule.types";
+import CustomerNegotiationWidget from "@/components/widget/CustomerNegotiationWidget";
 
 function WidgetSandboxContent() {
   const searchParams = useSearchParams();
@@ -27,6 +32,8 @@ function WidgetSandboxContent() {
   const [loading, setLoading] = useState(true);
   const [key, setKey] = useState(Date.now());
   const [deviceMode, setDeviceMode] = useState<"desktop" | "mobile">("desktop");
+  const [viewMode, setViewMode] = useState<"storefront" | "chat">("storefront");
+  const [isWidgetDrawerOpen, setIsWidgetDrawerOpen] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
   // Form states for quick product creation
@@ -42,6 +49,54 @@ function WidgetSandboxContent() {
   const [formCustomPrompt, setFormCustomPrompt] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
+
+  // Store connection state
+  const [store, setStore] = useState<{
+    id: string;
+    publicStoreKey: string;
+    status: string;
+    storeName: string;
+    platformStoreId?: string;
+    currency: string;
+  } | null>(null);
+  const [storeLoading, setStoreLoading] = useState(true);
+  const [activatingStore, setActivatingStore] = useState(false);
+
+  const fetchStore = async () => {
+    try {
+      setStoreLoading(true);
+      const res = await fetch("/api/v1/merchant/store");
+      if (!res.ok) return;
+      const json = await res.json();
+      if (json.success && json.data) {
+        setStore(json.data);
+      }
+    } catch (err) {
+      console.error("Failed to load store:", err);
+    } finally {
+      setStoreLoading(false);
+    }
+  };
+
+  const handleActivateStore = async () => {
+    try {
+      setActivatingStore(true);
+      const res = await fetch("/api/v1/merchant/store", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "ACTIVE" }),
+      });
+      const json = await res.json();
+      if (json.success && json.data) {
+        setStore(json.data);
+        setKey(Date.now());
+      }
+    } catch (err) {
+      console.error("Failed to activate store:", err);
+    } finally {
+      setActivatingStore(false);
+    }
+  };
 
   const fetchProducts = async (autoSelectId?: string) => {
     try {
@@ -68,6 +123,7 @@ function WidgetSandboxContent() {
 
   useEffect(() => {
     fetchProducts();
+    fetchStore();
   }, [initialProductId]);
 
   const selectedProduct = products.find((p) => p.id === selectedProductId) || products[0];
@@ -217,6 +273,34 @@ function WidgetSandboxContent() {
             Add Product
           </button>
 
+          {/* View Mode Toggle */}
+          <div className="flex items-center bg-slate-200/80 p-1 rounded-lg">
+            <button
+              onClick={() => {
+                setViewMode("storefront");
+                setIsWidgetDrawerOpen(false);
+              }}
+              className={`p-1.5 rounded-md text-xs font-medium flex items-center gap-1.5 transition ${
+                viewMode === "storefront" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+              }`}
+              title="Preview product page with [Negotiate Price] button"
+            >
+              <Store className="w-3.5 h-3.5 text-emerald-600" /> Storefront Preview
+            </button>
+            <button
+              onClick={() => {
+                setViewMode("chat");
+                setIsWidgetDrawerOpen(true);
+              }}
+              className={`p-1.5 rounded-md text-xs font-medium flex items-center gap-1.5 transition ${
+                viewMode === "chat" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+              }`}
+              title="Direct full-height chat widget frame"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-blue-600" /> Direct Chat
+            </button>
+          </div>
+
           {/* Device Toggle */}
           <div className="flex items-center bg-slate-200/80 p-1 rounded-lg">
             <button
@@ -239,7 +323,10 @@ function WidgetSandboxContent() {
 
           {/* Reset Button */}
           <button
-            onClick={restartSimulator}
+            onClick={() => {
+              restartSimulator();
+              setIsWidgetDrawerOpen(viewMode === "chat");
+            }}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-medium transition shadow-sm"
             title="Restart negotiation session"
           >
@@ -364,20 +451,178 @@ function WidgetSandboxContent() {
           </div>
         </div>
 
-        {/* Right Column: Embedded Iframe Widget */}
-        <div className="lg:col-span-8 flex justify-center bg-slate-200/60 p-6 rounded-2xl border border-slate-200">
+        {/* Right Column: Simulated Storefront PDP or Direct Chat Frame */}
+        <div className="lg:col-span-8 flex justify-center bg-slate-200/60 p-4 sm:p-6 rounded-2xl border border-slate-200">
           <div
-            className={`transition-all duration-300 bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-300 ${
-              deviceMode === "mobile" ? "w-[380px] h-[650px]" : "w-[430px] h-[650px]"
+            className={`transition-all duration-300 bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-300 flex flex-col relative ${
+              deviceMode === "mobile" ? "w-[380px] h-[660px]" : "w-[440px] h-[660px]"
             }`}
           >
             {selectedProduct ? (
-              <iframe
-                key={`${selectedProduct.id}-${key}`}
-                src={`/embed/widget?storeKey=pub_live_apex_9a8b7c6d5e4f3a2b1c&productId=${selectedProduct.id}&t=${key}`}
-                className="w-full h-full border-none"
-                title="NegoZaar Storefront Embed Widget"
-              />
+              viewMode === "storefront" ? (
+                /* STOREFRONT PDP PREVIEW MODE */
+                <div className="flex flex-col h-full bg-slate-50 relative overflow-hidden">
+                  {/* Mock Browser URL Bar */}
+                  <div className="bg-slate-100 border-b border-slate-200 px-3 py-2 flex items-center gap-2 text-[11px] text-slate-500 font-mono shrink-0">
+                    <div className="flex gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-rose-400 inline-block" />
+                      <span className="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block" />
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block" />
+                    </div>
+                    <div className="flex-1 bg-white rounded px-2 py-0.5 border border-slate-200 truncate text-[10px]">
+                      https://{store?.platformStoreId || "apex-luxury.myshopify.com"}/products/{selectedProduct.handle || "item"}
+                    </div>
+                  </div>
+
+                  {/* Warning banner if store is paused / disconnected */}
+                  {store && store.status !== "ACTIVE" && (
+                    <div className="p-2.5 bg-amber-50 border-b border-amber-200 text-amber-800 text-xs flex items-center justify-between gap-2 shrink-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <span className="truncate text-[11px] font-medium">Store is paused/disconnected</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleActivateStore}
+                        disabled={activatingStore}
+                        className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-[10px] font-bold shrink-0 flex items-center gap-1 cursor-pointer transition shadow-2xs"
+                      >
+                        {activatingStore ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                        Activate
+                      </button>
+                    </div>
+                  )}
+
+                  {/* PDP Content */}
+                  <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {/* Product Image Mock */}
+                    <div className="w-full h-44 rounded-xl bg-slate-200 border border-slate-300/80 overflow-hidden relative flex items-center justify-center">
+                      {selectedProduct.imageUrl ? (
+                        <img
+                          src={selectedProduct.imageUrl}
+                          alt={selectedProduct.title}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="text-center text-slate-400">
+                          <ShoppingBag className="w-10 h-10 mx-auto mb-1 opacity-50" />
+                          <span className="text-xs">Product Image</span>
+                        </div>
+                      )}
+                      <span className="absolute top-2 right-2 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-900/80 text-white backdrop-blur-xs">
+                        Shopify Live
+                      </span>
+                    </div>
+
+                    {/* Title & Listed Price */}
+                    <div>
+                      <div className="flex items-center gap-1.5 text-[11px] text-emerald-700 font-semibold mb-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        In Stock ({selectedProduct.inventoryQuantity || 15} units available)
+                      </div>
+                      <h3 className="font-bold text-base text-slate-900 leading-snug">
+                        {selectedProduct.title}
+                      </h3>
+                      {selectedProduct.sku && (
+                        <span className="text-[11px] text-slate-400 font-mono">SKU: {selectedProduct.sku}</span>
+                      )}
+                    </div>
+
+                    {/* Price Block */}
+                    <div className="p-3 rounded-xl bg-white border border-slate-200/90 shadow-2xs space-y-0.5">
+                      <span className="text-xs text-slate-500 block">Product price:</span>
+                      <div className="text-2xl font-black text-slate-950 tracking-tight">
+                        {selectedProduct.currency} {selectedProduct.originalPrice.toLocaleString()}
+                      </div>
+                      <p className="text-[11px] text-slate-400">Inclusive of all local taxes & shipping</p>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="space-y-2 pt-1">
+                      {/* Standard Store Add to Cart */}
+                      <button
+                        type="button"
+                        onClick={() => alert("This button simulates standard Shopify Add to Cart at retail price.")}
+                        className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold transition flex items-center justify-center gap-2 shadow-xs"
+                      >
+                        <ShoppingBag className="w-4 h-4" />
+                        Add to Cart
+                      </button>
+
+                      {/* INJECTED NEGOZAAR NEGOTIATE BUTTON */}
+                      <div className="space-y-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (store && store.status !== "ACTIVE") {
+                              handleActivateStore().then(() => {
+                                restartSimulator();
+                                setIsWidgetDrawerOpen(true);
+                              });
+                            } else {
+                              restartSimulator();
+                              setIsWidgetDrawerOpen(true);
+                            }
+                          }}
+                          className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 shadow-sm ring-2 ring-emerald-500/20 cursor-pointer"
+                        >
+                          <span>Negotiate Price</span>
+                          <Sparkles className="w-4 h-4 text-emerald-200 animate-pulse" />
+                        </button>
+                        <span className="text-[10px] text-slate-400 text-center block">
+                          ⚡ Injected by NegoZaar Storefront Embed SDK
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SLIDE-OVER NEGOTIATION WIDGET DRAWER */}
+                  {isWidgetDrawerOpen && (
+                    <div className="absolute inset-0 z-20 flex flex-col justify-end bg-slate-950/50 backdrop-blur-2xs animate-fade-in">
+                      <div className="w-full h-[94%] bg-white rounded-t-2xl shadow-2xl overflow-hidden flex flex-col animate-slide-up border-t border-slate-300">
+                        <CustomerNegotiationWidget
+                          key={`${selectedProduct.id}-${key}-${store?.publicStoreKey || 'default'}-${store?.status}`}
+                          storeKey={store?.publicStoreKey || "pub_live_apex_9a8b7c6d5e4f3a2b1c"}
+                          productId={selectedProduct.id}
+                          onClose={() => setIsWidgetDrawerOpen(false)}
+                          isModal={true}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* DIRECT CHAT FRAME MODE */
+                store && store.status !== "ACTIVE" ? (
+                  <div className="h-full flex flex-col items-center justify-center p-8 text-center bg-slate-50 space-y-4">
+                    <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center">
+                      <AlertCircle className="w-6 h-6" />
+                    </div>
+                    <div className="max-w-xs space-y-1">
+                      <h4 className="text-sm font-bold text-slate-800">Store Paused / Disconnected</h4>
+                      <p className="text-xs text-slate-500">
+                        The AI negotiation engine is offline while your store is paused. Activate it to start the live interactive negotiation.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleActivateStore}
+                      disabled={activatingStore}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center gap-2 cursor-pointer"
+                    >
+                      {activatingStore ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                      Activate Store & Start Simulation
+                    </button>
+                  </div>
+                ) : (
+                  <CustomerNegotiationWidget
+                    key={`${selectedProduct.id}-${key}-${store?.publicStoreKey || 'default'}-${store?.status}`}
+                    storeKey={store?.publicStoreKey || "pub_live_apex_9a8b7c6d5e4f3a2b1c"}
+                    productId={selectedProduct.id}
+                    isModal={false}
+                  />
+                )
+              )
             ) : (
               <div className="h-full flex items-center justify-center p-8 text-center text-slate-400 text-sm">
                 No product available to negotiate

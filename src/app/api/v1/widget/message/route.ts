@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { z } from "zod";
 import { NegotiationSessionManager } from "@/modules/negotiation/session-manager";
 import { RateLimiter } from "@/modules/security/rate-limiter";
 import { DomainError } from "@/core/errors/domain-errors";
+import { jsonWithCors, corsOptionsResponse } from "@/modules/security/cors";
 
 const messageOfferSchema = z.object({
   sessionToken: z.string().min(1, "Session token required"),
@@ -16,7 +17,7 @@ export async function POST(req: NextRequest) {
     const rateCheck = RateLimiter.check(`message_rate_${ip}`, 20, 60);
 
     if (!rateCheck.allowed) {
-      return NextResponse.json(
+      return jsonWithCors(
         { error: "Negotiation rate limit exceeded. Please wait a moment." },
         { status: 429, headers: { "Retry-After": String(rateCheck.resetInSeconds) } }
       );
@@ -27,26 +28,19 @@ export async function POST(req: NextRequest) {
 
     const result = await NegotiationSessionManager.submitCustomerOffer(parsed);
 
-    return NextResponse.json(result, { status: 200 });
+    return jsonWithCors(result, { status: 200 });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: "Validation failed", details: error.errors }, { status: 400 });
+      return jsonWithCors({ error: "Validation failed", details: error.errors }, { status: 400 });
     }
     if (error instanceof DomainError) {
-      return NextResponse.json({ error: error.message, code: error.code }, { status: error.statusCode });
+      return jsonWithCors({ error: error.message, code: error.code }, { status: error.statusCode });
     }
     console.error("[POST /api/v1/widget/message] Error:", error);
-    return NextResponse.json({ error: "Failed to process negotiation offer" }, { status: 500 });
+    return jsonWithCors({ error: "Failed to process negotiation offer" }, { status: 500 });
   }
 }
 
 export async function OPTIONS() {
-  return new NextResponse(null, {
-    status: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Store-Key",
-    },
-  });
+  return corsOptionsResponse();
 }

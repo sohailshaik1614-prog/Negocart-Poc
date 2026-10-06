@@ -13,6 +13,7 @@ import { AIPromptContext } from "@/core/types/ai.types";
 import {
   DomainError,
   NegotiationRoundsExceededError,
+  PlanQuotaExceededError,
   ProductNotEligibleError,
   SessionAlreadyClosedError,
   SessionExpiredError,
@@ -25,6 +26,7 @@ import { SessionTokenService } from "@/modules/security/token-service";
 import { SecuritySanitizer } from "@/modules/security/sanitizer";
 import { NegotiationStateMachine } from "./state-machine";
 import { EcommerceAdapterFactory } from "@/modules/ecommerce/factory";
+import { BillingService } from "@/modules/billing/billing-service";
 
 export interface StartNegotiationDTO {
   publicStoreKey?: string;
@@ -86,6 +88,12 @@ export class NegotiationSessionManager {
       throw new ProductNotEligibleError("Negotiation is not enabled for this product");
     }
 
+    // Enforce merchant subscription plan limits & quotas
+    const quota = await BillingService.checkNegotiationQuota(store.merchantId);
+    if (!quota.allowed) {
+      throw new PlanQuotaExceededError(quota.reason);
+    }
+
     const sessionId = crypto.randomUUID();
     const customerId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + (rule.couponValidityHours || 24) * 3600 * 1000).toISOString();
@@ -125,9 +133,10 @@ export class NegotiationSessionManager {
     };
 
     await NegoZaarRepository.createNegotiationSession(session);
+    await BillingService.incrementNegotiationUsage(store.merchantId);
 
     // Initial greeting message from AI Negotiator
-    const initialGreeting = `Hello! I'm NegoZaar, your sales assistant. The listed price for "${product.title}" is ${product.currency} ${product.originalPrice}. What price would you like to offer today?`;
+    const initialGreeting = `Interested in "${product.title}"? The listed price is ${product.currency} ${product.originalPrice}. Let's see if we can find a better price for you — what is your offer?`;
 
     const initialMsg: NegotiationMessage = {
       id: crypto.randomUUID(),
@@ -289,6 +298,20 @@ export class NegotiationSessionManager {
       createdAt: now,
     };
     await NegoZaarRepository.addOffer(customerOfferRecord);
+
+    await NegoZaarRepository.recordAnalyticsEvent({
+      id: crypto.randomUUID(),
+      storeId: store.id,
+      sessionId: session.id,
+      eventType: "OFFER_PROPOSED",
+      properties: {
+        amount: parsedAmount,
+        attempt: newAttempt,
+        discountPercentage: customerDiscountPct,
+        isBelowFloor,
+      },
+      occurredAt: now,
+    });
 
     // Update session current offer to customer's offer
     await NegoZaarRepository.updateSessionOffer(session.id, parsedAmount);
@@ -655,7 +678,36 @@ export class NegotiationSessionManager {
       storeId: store.id,
       sessionId: session.id,
       eventType: "OFFER_ACCEPTED",
-      properties: { agreedPrice, discountCode: couponResult.code },
+      properties: { agreedPrice, discountCode: couponResult.code, discountAmount },
+      occurredAt: new Date().toISOString(),
+    });
+
+    await NegoZaarRepository.recordAnalyticsEvent({
+      id: crypto.randomUUID(),
+      storeId: store.id,
+      sessionId: session.id,
+      eventType: "COUPON_GENERATED",
+      properties: {
+        code: couponResult.code,
+        discountAmount,
+        originalPrice: product.originalPrice,
+        agreedPrice,
+      },
+      occurredAt: new Date().toISOString(),
+    });
+
+    await NegoZaarRepository.recordAnalyticsEvent({
+      id: crypto.randomUUID(),
+      storeId: store.id,
+      sessionId: session.id,
+      eventType: "SESSION_COMPLETED",
+      properties: {
+        outcome: "ACCEPTED",
+        agreedPrice,
+        originalPrice: product.originalPrice,
+        discountAmount,
+        rounds: session.attemptNumber || session.currentRound,
+      },
       occurredAt: new Date().toISOString(),
     });
 
@@ -705,6 +757,19 @@ export class NegotiationSessionManager {
       occurredAt: new Date().toISOString(),
     });
 
+    await NegoZaarRepository.recordAnalyticsEvent({
+      id: crypto.randomUUID(),
+      storeId: session.storeId,
+      sessionId: session.id,
+      eventType: "SESSION_COMPLETED",
+      properties: {
+        outcome: "REJECTED",
+        reason: rejectionMsgText,
+        rounds: session.attemptNumber || session.currentRound,
+      },
+      occurredAt: new Date().toISOString(),
+    });
+
     const updatedSession = (await NegoZaarRepository.getSessionById(session.id))!;
     return { success: true, session: updatedSession };
   }
@@ -735,6 +800,30 @@ export class NegotiationSessionManager {
       roundNumber: session.attemptNumber || session.currentRound,
       attemptNumber: session.attemptNumber || session.currentRound,
       createdAt: new Date().toISOString(),
+    });
+
+    await NegoZaarRepository.recordAnalyticsEvent({
+      id: crypto.randomUUID(),
+      storeId: session.storeId,
+      sessionId: session.id,
+      eventType: "SESSION_ABANDONED",
+      properties: {
+        reason: endMsgText,
+        rounds: session.attemptNumber || session.currentRound,
+      },
+      occurredAt: new Date().toISOString(),
+    });
+
+    await NegoZaarRepository.recordAnalyticsEvent({
+      id: crypto.randomUUID(),
+      storeId: session.storeId,
+      sessionId: session.id,
+      eventType: "SESSION_COMPLETED",
+      properties: {
+        outcome: "TERMINATED",
+        rounds: session.attemptNumber || session.currentRound,
+      },
+      occurredAt: new Date().toISOString(),
     });
 
     const updatedSession = (await NegoZaarRepository.getSessionById(session.id))!;
@@ -781,3 +870,5 @@ export class NegotiationSessionManager {
     };
   }
 }
+
+export const SessionManager = NegotiationSessionManager;

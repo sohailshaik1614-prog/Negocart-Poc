@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { z } from "zod";
 import { NegotiationSessionManager } from "@/modules/negotiation/session-manager";
 import { RateLimiter } from "@/modules/security/rate-limiter";
 import { DomainError } from "@/core/errors/domain-errors";
+import { jsonWithCors, corsOptionsResponse } from "@/modules/security/cors";
 
 const startSessionSchema = z.object({
   publicStoreKey: z.string().min(1, "Public store key required"),
@@ -17,7 +18,7 @@ export async function POST(req: NextRequest) {
     const rateCheck = RateLimiter.check(`session_init_${ip}`, 15, 60);
 
     if (!rateCheck.allowed) {
-      return NextResponse.json(
+      return jsonWithCors(
         { error: "Too many requests. Please try again later." },
         { status: 429, headers: { "Retry-After": String(rateCheck.resetInSeconds) } }
       );
@@ -28,26 +29,19 @@ export async function POST(req: NextRequest) {
 
     const result = await NegotiationSessionManager.startSession(parsed);
 
-    return NextResponse.json(result, { status: 201 });
+    return jsonWithCors(result, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: "Validation failed", details: error.errors }, { status: 400 });
+      return jsonWithCors({ error: "Validation failed", details: error.errors }, { status: 400 });
     }
     if (error instanceof DomainError) {
-      return NextResponse.json({ error: error.message, code: error.code }, { status: error.statusCode });
+      return jsonWithCors({ error: error.message, code: error.code }, { status: error.statusCode });
     }
     console.error("[POST /api/v1/widget/session] Error:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return jsonWithCors({ error: "Internal server error" }, { status: 500 });
   }
 }
 
 export async function OPTIONS() {
-  return new NextResponse(null, {
-    status: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Store-Key",
-    },
-  });
+  return corsOptionsResponse();
 }

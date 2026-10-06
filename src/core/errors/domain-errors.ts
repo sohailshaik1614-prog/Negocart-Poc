@@ -58,3 +58,10 @@ export class ProductNotEligibleError extends DomainError {
     super(message, 403, "PRODUCT_NOT_ELIGIBLE");
   }
 }
+
+export class PlanQuotaExceededError extends DomainError {
+  constructor(message: string = "Monthly negotiation limit reached for your subscription plan") {
+    super(message, 402, "PLAN_QUOTA_EXCEEDED");
+  }
+}
+

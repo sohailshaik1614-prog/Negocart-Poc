@@ -7,7 +7,7 @@ import {
   UpdateProductDTO,
   ProductFilterParams,
 } from "@/core/types/product.types";
-import { Store } from "@/core/types/store.types";
+import { Store, StoreCredentials, EcommercePlatform } from "@/core/types/store.types";
 import { Merchant, User, UserRole } from "@/core/types/tenant.types";
 import {
   NegotiationMessage,
@@ -15,7 +15,7 @@ import {
   NegotiationSession,
   SessionStatus,
 } from "@/core/types/negotiation.types";
-import { AnalyticsEvent } from "@/core/types/analytics.types";
+import { AnalyticsEvent, AnalyticsEventType } from "@/core/types/analytics.types";
 import { getSupabaseAdminClient } from "./supabase-client";
 import { env } from "@/config/env";
 import { PasswordService } from "@/modules/auth/password-service";
@@ -125,6 +125,10 @@ export class NegoZaarRepository {
         },
       ],
     ]));
+  }
+
+  private static get storeCredentials(): Map<string, StoreCredentials> {
+    return ((globalThis as any).__negozaar_store_credentials ??= new Map());
   }
 
   private static get products(): Map<string, Product> {
@@ -582,6 +586,103 @@ export class NegoZaarRepository {
     return data as Store;
   }
 
+  public static async getStoreByPlatformStoreId(
+    platform: EcommercePlatform,
+    platformStoreId: string
+  ): Promise<Store | null> {
+    const cleanId = platformStoreId.toLowerCase().trim();
+    if (this.isUsingMockDb()) {
+      return (
+        Array.from(this.stores.values()).find(
+          (s) => s.platform === platform && s.platformStoreId.toLowerCase().trim() === cleanId
+        ) || null
+      );
+    }
+    const supabase = getSupabaseAdminClient();
+    const { data } = await supabase
+      .from("stores")
+      .select("*")
+      .eq("platform", platform)
+      .eq("platform_store_id", cleanId)
+      .maybeSingle();
+
+    if (!data) return null;
+    return {
+      id: data.id,
+      merchantId: data.merchant_id,
+      platform: data.platform,
+      platformStoreId: data.platform_store_id,
+      storeName: data.store_name,
+      publicStoreKey: data.public_store_key,
+      currency: data.currency,
+      status: data.status,
+      settings: data.settings || {},
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
+  public static async saveStoreCredentials(creds: StoreCredentials): Promise<StoreCredentials> {
+    if (this.isUsingMockDb()) {
+      this.storeCredentials.set(creds.storeId, creds);
+      return creds;
+    }
+    const supabase = getSupabaseAdminClient();
+    const { data, error } = await supabase
+      .from("store_credentials")
+      .upsert({
+        store_id: creds.storeId,
+        encrypted_access_token: creds.encryptedAccessToken,
+        api_key: creds.apiKey,
+        encrypted_api_secret: creds.encryptedApiSecret,
+        encrypted_webhook_secret: creds.encryptedWebhookSecret,
+        scopes: creds.scopes,
+        token_expires_at: creds.tokenExpiresAt,
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+    return creds;
+  }
+
+  public static async getStoreCredentials(storeId: string): Promise<StoreCredentials | null> {
+    if (this.isUsingMockDb()) {
+      return this.storeCredentials.get(storeId) || null;
+    }
+    const supabase = getSupabaseAdminClient();
+    const { data } = await supabase
+      .from("store_credentials")
+      .select("*")
+      .eq("store_id", storeId)
+      .maybeSingle();
+
+    if (!data) return null;
+    return {
+      id: data.id,
+      storeId: data.store_id,
+      encryptedAccessToken: data.encrypted_access_token,
+      apiKey: data.api_key,
+      encryptedApiSecret: data.encrypted_api_secret,
+      encryptedWebhookSecret: data.encrypted_webhook_secret,
+      scopes: data.scopes || [],
+      tokenExpiresAt: data.token_expires_at,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
+  public static async deleteStoreCredentials(storeId: string): Promise<boolean> {
+    if (this.isUsingMockDb()) {
+      this.storeCredentials.delete(storeId);
+      return true;
+    }
+    const supabase = getSupabaseAdminClient();
+    await supabase.from("store_credentials").delete().eq("store_id", storeId);
+    return true;
+  }
+
   // ============================================================================
   // PRODUCT MANAGEMENT (CRUD + NEGOTIATION CONFIGURATION)
   // ============================================================================
@@ -853,6 +954,205 @@ export class NegoZaarRepository {
     const { error } = await supabase.from("products").delete().eq("id", productId);
     if (error) throw new Error(error.message);
     return true;
+  }
+
+  public static async getProductByExternalId(storeId: string, externalProductId: string): Promise<Product | null> {
+    if (this.isUsingMockDb()) {
+      return (
+        Array.from(this.products.values()).find(
+          (p) => p.storeId === storeId && p.externalProductId === externalProductId
+        ) || null
+      );
+    }
+    const supabase = getSupabaseAdminClient();
+    const { data } = await supabase
+      .from("products")
+      .select("*")
+      .eq("store_id", storeId)
+      .eq("external_product_id", externalProductId)
+      .maybeSingle();
+
+    if (!data) return null;
+    return {
+      id: data.id,
+      storeId: data.store_id,
+      externalProductId: data.external_product_id,
+      title: data.title,
+      handle: data.handle,
+      sku: data.sku,
+      originalPrice: parseFloat(data.original_price),
+      currency: data.currency,
+      imageUrl: data.image_url,
+      inventoryQuantity: data.inventory_quantity,
+      isActive: data.is_active,
+      syncedAt: data.synced_at,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
+  public static async deleteProductByExternalId(storeId: string, externalProductId: string): Promise<boolean> {
+    const existing = await this.getProductByExternalId(storeId, externalProductId);
+    if (!existing) return false;
+    return this.deleteProduct(existing.id);
+  }
+
+  public static async upsertSyncedProduct(productData: {
+    storeId: string;
+    externalProductId: string;
+    title: string;
+    handle: string;
+    sku?: string;
+    originalPrice: number;
+    currency: string;
+    imageUrl?: string;
+    inventoryQuantity?: number;
+    isActive?: boolean;
+  }): Promise<ProductWithNegotiationSettings> {
+    const existing = await this.getProductByExternalId(productData.storeId, productData.externalProductId);
+    const now = new Date().toISOString();
+
+    if (existing) {
+      const updatedProduct: Product = {
+        ...existing,
+        title: productData.title,
+        handle: productData.handle,
+        sku: productData.sku || existing.sku,
+        originalPrice: productData.originalPrice,
+        currency: productData.currency,
+        imageUrl: productData.imageUrl || existing.imageUrl,
+        inventoryQuantity: productData.inventoryQuantity ?? existing.inventoryQuantity,
+        isActive: productData.isActive !== false,
+        syncedAt: now,
+        updatedAt: now,
+      };
+
+      if (this.isUsingMockDb()) {
+        this.products.set(existing.id, updatedProduct);
+        const rule = this.rules.get(existing.id);
+        if (rule) {
+          // If price changed and floor exceeds new price, adjust floor proportionally
+          if (rule.minAcceptablePrice > productData.originalPrice) {
+            rule.minAcceptablePrice = Math.round(productData.originalPrice * 0.75);
+            rule.autoAcceptPrice = Math.round(productData.originalPrice * 0.95);
+          }
+          rule.updatedAt = now;
+        }
+        return {
+          ...updatedProduct,
+          negotiationSettings: rule || {
+            id: crypto.randomUUID(),
+            storeId: productData.storeId,
+            productId: existing.id,
+            isNegotiationEnabled: true,
+            minAcceptablePrice: Math.round(productData.originalPrice * 0.75),
+            maxDiscountPercentage: 25,
+            autoAcceptPrice: Math.round(productData.originalPrice * 0.95),
+            maxNegotiationRounds: 3,
+            strategy: "MODERATE",
+            minOrderQuantity: 1,
+            couponValidityHours: 24,
+            createdAt: now,
+            updatedAt: now,
+          },
+        };
+      } else {
+        const supabase = getSupabaseAdminClient();
+        await supabase
+          .from("products")
+          .update({
+            title: updatedProduct.title,
+            handle: updatedProduct.handle,
+            sku: updatedProduct.sku,
+            original_price: updatedProduct.originalPrice,
+            currency: updatedProduct.currency,
+            image_url: updatedProduct.imageUrl,
+            inventory_quantity: updatedProduct.inventoryQuantity,
+            is_active: updatedProduct.isActive,
+            synced_at: now,
+            updated_at: now,
+          })
+          .eq("id", existing.id);
+
+        const rule = await this.getProductRule(productData.storeId, existing.id);
+        return { ...updatedProduct, negotiationSettings: rule! };
+      }
+    } else {
+      // Create new imported product
+      const newProductId = crypto.randomUUID();
+      const newProduct: Product = {
+        id: newProductId,
+        storeId: productData.storeId,
+        externalProductId: productData.externalProductId,
+        title: productData.title,
+        handle: productData.handle,
+        sku: productData.sku,
+        originalPrice: productData.originalPrice,
+        currency: productData.currency,
+        imageUrl: productData.imageUrl,
+        inventoryQuantity: productData.inventoryQuantity ?? 10,
+        isActive: productData.isActive !== false,
+        syncedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const defaultRule: ProductNegotiationSettings = {
+        id: crypto.randomUUID(),
+        storeId: productData.storeId,
+        productId: newProductId,
+        isNegotiationEnabled: true,
+        minAcceptablePrice: Math.round(productData.originalPrice * 0.75),
+        maxDiscountPercentage: 25,
+        autoAcceptPrice: Math.round(productData.originalPrice * 0.95),
+        maxNegotiationRounds: 3,
+        strategy: "MODERATE",
+        minOrderQuantity: 1,
+        couponValidityHours: 24,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      if (this.isUsingMockDb()) {
+        this.products.set(newProductId, newProduct);
+        this.rules.set(newProductId, defaultRule);
+        return { ...newProduct, negotiationSettings: defaultRule };
+      } else {
+        const supabase = getSupabaseAdminClient();
+        await supabase.from("products").insert({
+          id: newProduct.id,
+          store_id: newProduct.storeId,
+          external_product_id: newProduct.externalProductId,
+          title: newProduct.title,
+          handle: newProduct.handle,
+          sku: newProduct.sku,
+          original_price: newProduct.originalPrice,
+          currency: newProduct.currency,
+          image_url: newProduct.imageUrl,
+          inventory_quantity: newProduct.inventoryQuantity,
+          is_active: newProduct.isActive,
+          synced_at: now,
+          created_at: now,
+          updated_at: now,
+        });
+
+        await supabase.from("product_negotiation_settings").insert({
+          id: defaultRule.id,
+          store_id: defaultRule.storeId,
+          product_id: defaultRule.productId,
+          is_negotiation_enabled: defaultRule.isNegotiationEnabled,
+          min_acceptable_price: defaultRule.minAcceptablePrice,
+          max_discount_percentage: defaultRule.maxDiscountPercentage,
+          auto_accept_price: defaultRule.autoAcceptPrice,
+          max_negotiation_rounds: defaultRule.maxNegotiationRounds,
+          strategy: defaultRule.strategy,
+          created_at: now,
+          updated_at: now,
+        });
+
+        return { ...newProduct, negotiationSettings: defaultRule };
+      }
+    }
   }
 
   public static async getProductsForStore(
@@ -1133,6 +1433,9 @@ export class NegoZaarRepository {
     if (this.isUsingMockDb()) {
       const session = this.sessions.get(sessionId);
       if (session) {
+        if (!session.initialCustomerOffer) {
+          session.initialCustomerOffer = currentOffer;
+        }
         session.currentOffer = currentOffer;
         if (status) session.status = status;
         session.updatedAt = now;
@@ -1141,10 +1444,14 @@ export class NegoZaarRepository {
     }
 
     const supabase = getSupabaseAdminClient();
+    const existing = await this.getSessionById(sessionId);
     const updatePayload: Record<string, unknown> = {
       current_offer: currentOffer,
       updated_at: now,
     };
+    if (existing && !existing.initialCustomerOffer) {
+      updatePayload.initial_customer_offer = currentOffer;
+    }
     if (status) updatePayload.status = status;
     await supabase.from("negotiation_sessions").update(updatePayload).eq("id", sessionId);
   }
@@ -1328,6 +1635,35 @@ export class NegoZaarRepository {
       ip_hash: event.ipHash,
       occurred_at: event.occurredAt,
     });
+  }
+
+  public static async getAnalyticsEvents(filter?: {
+    storeId?: string;
+    eventType?: AnalyticsEventType;
+  }): Promise<AnalyticsEvent[]> {
+    if (this.isUsingMockDb()) {
+      return this.analytics.filter((e) => {
+        if (filter?.storeId && e.storeId !== filter.storeId) return false;
+        if (filter?.eventType && e.eventType !== filter.eventType) return false;
+        return true;
+      });
+    }
+
+    const supabase = getSupabaseAdminClient();
+    let query = supabase.from("analytics_events").select("*");
+    if (filter?.storeId) query = query.eq("store_id", filter.storeId);
+    if (filter?.eventType) query = query.eq("event_type", filter.eventType);
+
+    const { data } = await query;
+    return ((data || []) as any[]).map((d) => ({
+      id: d.id,
+      storeId: d.store_id,
+      sessionId: d.session_id,
+      eventType: d.event_type,
+      properties: d.properties || {},
+      ipHash: d.ip_hash,
+      occurredAt: d.occurred_at,
+    }));
   }
 
   public static async getRecentSessions(
